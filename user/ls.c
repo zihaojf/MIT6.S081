@@ -41,6 +41,9 @@ ls(char *path)
     return;
   }
 
+  printf("path: %s\n",path);
+  
+
   switch(st.type){
   case T_FILE:
     printf("%s %d %d %l\n", fmtname(path), st.type, st.ino, st.size);
@@ -52,12 +55,17 @@ ls(char *path)
       break;
     }
     strcpy(buf, path);
-    p = buf+strlen(buf);
+    printf("buffer1: %s\n",buf);
+    p = buf + strlen(buf);
+    printf("test: %s",buf);
     *p++ = '/';
+    printf("test: %s",buf);
+    
     while(read(fd, &de, sizeof(de)) == sizeof(de)){
       if(de.inum == 0)
         continue;
       memmove(p, de.name, DIRSIZ);
+      // printf("test: %s\n",de.name);
       p[DIRSIZ] = 0;
       if(stat(buf, &st) < 0){
         printf("ls: cannot stat %s\n", buf);
