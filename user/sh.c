@@ -54,8 +54,9 @@ void panic(char*);
 struct cmd *parsecmd(char*);
 
 // Execute cmd.  Never returns.
+__attribute__((noreturn))
 void
-runcmd(struct cmd *cmd)
+runcmd(struct cmd *cmd) 
 {
   int p[2];
   struct backcmd *bcmd;
@@ -77,7 +78,7 @@ runcmd(struct cmd *cmd)
       exit(1);
     exec(ecmd->argv[0], ecmd->argv);
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
-    break;
+    exit(1);
 
   case REDIR:
     rcmd = (struct redircmd*)cmd;
@@ -87,7 +88,7 @@ runcmd(struct cmd *cmd)
       exit(1);
     }
     runcmd(rcmd->cmd);
-    break;
+    exit(0);
 
   case LIST:
     lcmd = (struct listcmd*)cmd;
@@ -95,7 +96,7 @@ runcmd(struct cmd *cmd)
       runcmd(lcmd->left);
     wait(0);
     runcmd(lcmd->right);
-    break;
+    exit(1);
 
   case PIPE:
     pcmd = (struct pipecmd*)cmd;
@@ -119,7 +120,7 @@ runcmd(struct cmd *cmd)
     close(p[1]);
     wait(0);
     wait(0);
-    break;
+    exit(1);
 
   case BACK:
     bcmd = (struct backcmd*)cmd;

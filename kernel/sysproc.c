@@ -95,3 +95,12 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_trace(void)
+{
+  int sys_id;
+  if(argint(0, &sys_id) < 0)
+    return -1;
+  return sys_id;
+}
