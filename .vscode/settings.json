@@ -1,6 +1,10 @@
 {
     "files.associations": {
         "*.v": "verilog",
-        "types.h": "c"
+        "types.h": "c",
+        "sysinfo.h": "c",
+        "proc.h": "c",
+        "param.h": "c",
+        "defs.h": "c"
     }
 }

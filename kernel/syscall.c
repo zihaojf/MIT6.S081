@@ -105,6 +105,7 @@ extern uint64 sys_wait(void);
 extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
 extern uint64 sys_trace(void);
+extern uint64 sys_sysinfo(void);
 
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -129,6 +130,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_trace]   sys_trace,
+[SYS_sysinfo] sys_sysinfo,
 };
 
 // syscall names
@@ -155,7 +157,8 @@ static const char *syscall_names[] = {
     [19] = "link",
     [20] = "mkdir",
     [21] = "close",
-    [22] = "trace"
+    [22] = "trace",
+    [23] = "sysinfo"
 };
 
 void
@@ -167,6 +170,7 @@ syscall(void)
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     p->trapframe->a0 = syscalls[num]();
+    
     if(num == SYS_trace) p->trace_mask = p->trapframe->a0;
     if((p->trace_mask>>num) & 1){
       if(num == 22) printf("%d: syscall %s -> %d\n",p->pid,syscall_names[num],0);
