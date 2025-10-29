@@ -80,7 +80,6 @@ test1()
 {
   int i;
   int j;
-
   printf("test1 start\n");
   count = 0;
   j = 0;
