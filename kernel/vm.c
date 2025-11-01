@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -97,14 +99,34 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte_t *pte;
   uint64 pa;
 
+  struct proc* p = myproc();
+  char* mem;
+
   if(va >= MAXVA)
     return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+  if(pte == 0) return 0;
+  if((*pte & PTE_V) == 0){
+    if(va >= p->sz){
+      return 0;
+    }
+    if(va < PGROUNDUP(p->trapframe->sp)){
+      return 0;
+    }
+    uint64 a = PGROUNDDOWN(va);
+    mem = kalloc();
+    if(mem == 0){
+      return 0;
+    }
+    memset(mem, 0, PGSIZE);
+    if(mappages(p->pagetable, a, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      kfree(mem);
+      return 0;
+    }
+    return (uint64)mem;
+  }
+
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -180,10 +202,11 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+    if((pte = walk(pagetable, a, 1)) == 0)
+      continue;
+      //panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -260,6 +283,8 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
   if(newsz >= oldsz)
     return oldsz;
+  if(newsz < 2*PGSIZE)
+    newsz = 2*PGSIZE;
 
   if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
     int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
@@ -315,9 +340,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      //panic("uvmcopy: pte should exist");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      //panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -332,6 +359,39 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
+  return -1;
+}
+
+// uvmcopy的lazy版本，只复制pagetable，不分配物理内存
+int
+uvmcopy_lazy(pagetable_t old, pagetable_t new, uint64 sz)
+{
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)
+      //panic("uvmcopy: pte should exist");
+      continue;
+    if((*pte & PTE_V) == 0)
+      //panic("uvmcopy: page not present");
+      continue;
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      goto err;
+    }
+
+  }
+  return 0;
+
+ err:
+  uvmunmap(new, 0, i / PGSIZE, 0);
   return -1;
 }
 
@@ -438,5 +498,36 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+void 
+vmprint(pagetable_t pagetable, int level)
+{
+  if(!level)
+  {
+    printf("page table %p\n",pagetable);
+  }
+  for(int i = 0; i<512; i++)
+  {
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V))
+    {
+      if(level==0){
+        printf("..%d: pte %p pa %p\n",i,pte,PTE2PA(pte));
+        pagetable_t child = (pagetable_t)PTE2PA(pte);
+        vmprint(child, 1);
+      }
+      else if(level == 1){
+        printf(".. ..%d: pte %p pa %p\n",i,pte,PTE2PA(pte));
+        pagetable_t child = (pagetable_t)PTE2PA(pte);
+        vmprint(child,2);
+      }
+      else{
+        printf(".. .. ..%d: pte %p pa %p\n",i,pte,PTE2PA(pte));
+        continue;
+      }
+    }
+    else continue;
   }
 }

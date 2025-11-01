@@ -24,7 +24,6 @@ sparse_memory(char *s)
 
   for (i = prev_end + PGSIZE; i < new_end; i += 64 * PGSIZE)
     *(char **)i = i;
-
   for (i = prev_end + PGSIZE; i < new_end; i += 64 * PGSIZE) {
     if (*(char **)i != i) {
       printf("failed to read value from memory\n");
