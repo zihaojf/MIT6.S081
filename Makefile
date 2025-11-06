@@ -355,6 +355,9 @@ handin-check:
 
 UPSTREAM := $(shell git remote -v | grep -m 1 "xv6-labs-2020" | awk '{split($$0,a," "); print a[1]}')
 
+gdb: kernel/kernel
+	gdb-multiarch -x .gdbinit
+
 tarball: handin-check
 	git archive --format=tar HEAD | gzip > lab-$(LAB)-handin.tar.gz
 

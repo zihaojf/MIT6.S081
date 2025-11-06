@@ -23,10 +23,16 @@ struct {
   struct run *freelist;
 } kmem;
 
+struct {
+  struct spinlock lock;
+  int refcnt[MaxIndex+10];
+} memref;
+
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&memref.lock,"memref");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -52,15 +58,48 @@ kfree(void *pa)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
 
+  acquire(&memref.lock);
+  if(memref.refcnt[MemIndex((uint64)pa)] > 1){
+    memref.refcnt[MemIndex((uint64)pa)]-=1;
+    release(&memref.lock);
+    return;
+  }
+  release(&memref.lock);
+  
   r = (struct run*)pa;
+  memset(pa,1,PGSIZE);
+  
+  acquire(&memref.lock);
+  memref.refcnt[MemIndex((uint64)pa)] = 0;
+  release(&memref.lock);
 
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
+
 }
+
+void
+incre_mem_ref(uint64 pa)
+{
+  acquire(&memref.lock);
+  // printf("incre pa:%p  %d\n",pa,memref.refcnt[MemIndex(pa)]);
+  release(&memref.lock);
+  acquire(&memref.lock);
+  memref.refcnt[MemIndex(pa)]++;
+  // printf("incre pa after:%p  %d\n",pa,memref.refcnt[MemIndex(pa)]);
+  release(&memref.lock);
+}
+
+void 
+decre_mem_ref(uint64 pa)
+{
+  if(pa > PHYSTOP || pa == 0) return;
+  kfree((void *)pa);
+}
+
 
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
@@ -76,7 +115,14 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    // 对应引用设置为1
+    acquire(&memref.lock);
+    memref.refcnt[MemIndex((uint64)r)] = 1;
+    // printf("kalloc pa:%p  %d\n",r,memref.refcnt[MemIndex((uint64)r)]);
+    release(&memref.lock);
+  }
+    
   return (void*)r;
 }

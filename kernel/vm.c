@@ -71,8 +71,11 @@ kvminithart()
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  if(va >= MAXVA)
+  if(va >= MAXVA){
+    printf("panic va:%p\n",va);
     panic("walk");
+  }
+    
 
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
@@ -181,9 +184,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -311,7 +314,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -320,19 +322,111 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    if((*pte & PTE_W)){
+      *pte = *pte | PTE_RSW;
+      flags = flags | PTE_RSW;
+      flags = flags & (~(PTE_W));
+      *pte = *pte & (~(PTE_W));
+    }
+
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      // kfree(mem);
       goto err;
     }
+    // 给相应物理页引用+1
+    incre_mem_ref(pa);
   }
   return 0;
 
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+}
+
+
+int 
+copyonwrite(pagetable_t pagetable)
+{
+  pte_t *pte;
+  char *mem;
+  uint64 pa;
+  uint flags;
+  // 1.获取地址
+  uint64 va = r_stval();
+  // 2.检查地址合法性
+  if(va >= MAXVA) return -1;
+  va = PGROUNDDOWN(va);
+  pte = walk(pagetable, va, 0);
+  if(pte == 0) return -1;
+  if((*pte & PTE_V) == 0) {
+    return -1;  // 未映射的页，不能 COW
+  }
+  // 3.确定pte rsw标志位是否是1
+  // printf("%d\n",*pte & (PTE_RSW));
+  pa = PTE2PA(*pte);
+  
+  flags = PTE_FLAGS(*pte);
+  if(*pte & (PTE_RSW)){
+    flags = (flags | PTE_W) & ~PTE_RSW;
+  }
+  else return -1;
+
+  // 4.分配物理内存
+  if((mem = kalloc()) == 0) return -1;
+  // printf("allocate!\n");
+  memmove(mem, (char *)pa, PGSIZE);
+  // 5.pte更改映射
+  uvmunmap(pagetable, va, 1, 0);
+  if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) < 0){
+    printf("panic mappages!\n");
+    return -1;
+  }
+  // printf("finish\n");
+  // 6.维护内存引用数
+  decre_mem_ref(pa);
+  return 1;
+}
+
+int 
+copyonwrite_va(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  char *mem;
+  uint64 pa;
+  uint flags;
+  // 2.检查地址合法性
+  if(va >= MAXVA) return -1;
+  va = PGROUNDDOWN(va);
+  pte = walk(pagetable, va, 0);
+  if(pte == 0) return -1;
+  if((*pte & PTE_V) == 0) {
+    return -1;  // 未映射的页，不能 COW
+  }
+  // 3.确定pte rsw标志位是否是1
+  // printf("%d\n",*pte & (PTE_RSW));
+  pa = PTE2PA(*pte);
+  
+  flags = PTE_FLAGS(*pte);
+  if(*pte & (PTE_RSW)){
+    flags = (flags | PTE_W) & ~PTE_RSW;
+  }
+  else return 0;
+  
+  // 4.分配物理内存
+  if((mem = kalloc()) == 0) return -1;
+  // printf("allocate!\n");
+  memmove(mem, (char *)pa, PGSIZE);
+  // 5.pte更改映射
+  uvmunmap(pagetable, va, 1, 0);
+  if(mappages(pagetable, va, PGSIZE, (uint64)mem, flags) < 0){
+    printf("panic mappages!\n");
+    return -1;
+  }
+  // printf("finish\n");
+  // 6.维护内存引用数
+  decre_mem_ref(pa);
+  return 1;
 }
 
 // mark a PTE invalid for user access.
@@ -355,12 +449,28 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
+
+  if(dstva >= MAXVA) return -1;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+
+    pte = walk(pagetable,va0,0);
+    if(pte == 0 || (*pte & PTE_V)==0)
       return -1;
+    // 判断是否有PTE_RSW标志位
+    if(copyonwrite_va(pagetable, va0) < 0)
+      return -1;
+
+    pte = walk(pagetable, va0, 0);
+    if(pte == 0 || (*pte & PTE_V)==0 || (*pte & PTE_W) == 0)
+      return -1;
+
+    pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0) return -1;
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

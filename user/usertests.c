@@ -2403,7 +2403,7 @@ stacktest(char *s)
   }
   wait(&xstatus);
   if(xstatus == -1)  // kernel killed child?
-    exit(0);
+    exit(0); 
   else
     exit(xstatus);
 }
