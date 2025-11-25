@@ -316,6 +316,32 @@ sys_open(void)
     }
   }
 
+  int depth = 0;
+  while (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    char target[MAXPATH];
+    memset(target, 0, MAXPATH);
+
+    if((readi(ip, 0, (uint64)target, 0, MAXPATH)) < 0){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    iunlockput(ip);
+
+    if((ip = namei(target)) == 0){
+      end_op();
+      return -1;
+    }
+
+    depth++;
+    ilock(ip);
+    if(depth > 10){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
@@ -482,5 +508,41 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+
+uint64
+sys_symlink(void)
+{
+  char path[MAXPATH],target[MAXPATH];
+  struct inode* ip;
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+  if((ip = namei(path)) != 0 ){
+    // 该路径下存在重名的文件，无法再创建一个同名的软链接
+    end_op();
+    return -1;
+  }
+
+  // 创建一个inode，类型为T_SYMLINK
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0 ){
+    end_op();
+    return -1;
+  }
+  
+  // ilock(ip);
+  // 在该inode中填充target目标地址
+  if((writei(ip, 0, (uint64)target, 0, MAXPATH)) < 0){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  
+  iunlockput(ip);
+  end_op();
+  // printf("ok!");
   return 0;
 }
